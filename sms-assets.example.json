@@ -1,0 +1,11 @@
+{
+  "catalog": {
+    "checkout": {"signature": "YOUR_APPROVED_SIGNATURE", "template": "shop-checkout-v1"},
+    "fulfillment": {"signature": "YOUR_APPROVED_SIGNATURE", "template": "shop-fulfillment-v1"},
+    "receipt": {"signature": "YOUR_APPROVED_SIGNATURE", "template": "shop-receipt-v1"},
+    "order_update": {"signature": "YOUR_APPROVED_SIGNATURE", "template": "shop-order-update-v1"}
+  },
+  "signatures": [],
+  "templates": []
+}
+
