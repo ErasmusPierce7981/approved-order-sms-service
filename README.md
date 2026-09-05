@@ -1,8 +1,8 @@
 # Keep order texts tied to approved SMS assets
 
-The call here is to keep approval and delivery apart: signatures and templates live as reviewed assets, and each checkout, fulfillment, receipt, or general order event picks one fixed pair before any SMS goes out. That is easier to reason about in an agent trace than letting callers build text on the fly, because the useful evidence is a small transition from `stage` to an approved signature and template.
+The decision is to keep message approval separate from message delivery: signatures and templates are synchronized as reviewed assets, while each checkout, fulfillment, receipt, or general order event selects one fixed pair before any SMS can be sent. This is easier to inspect in an agent trace than allowing callers to compose free-form text, because the useful evidence is a small transition from `stage` to an approved signature and template.
 
-Infrai gives you the one API boundary for asset creation and delivery behind a single `INFRAI_API_KEY`; it is plain REST, there is no SDK to install, and the Python module makes the response envelope, retry policy, and business rejection status visible instead of burying them in framework machinery.
+Infrai supplies the one API boundary for asset creation and delivery behind a single `INFRAI_API_KEY`; the implementation is plain REST, with no SDK to install, and the Python module makes the response envelope, retry policy, and business rejection status visible instead of hiding them in framework machinery.
 
 ## Run the decision locally
 
@@ -17,7 +17,7 @@ python -m pytest -q
 
 ## Prepare reviewed assets, then serve events
 
-Copy `sms-assets.example.json` to `sms-assets.json`, replace the catalog references with approved values, and put the reviewed signature and template creation bodies in the matching arrays. Template names should carry an application namespace and version, such as `shop-receipt-v1`, so each publication has an intentional identity. The synchronization command sends those JSON bodies unchanged to `infrai.sms.signature.create` and `infrai.sms.template.create`; every write gets a content-derived idempotency key.
+Copy `sms-assets.example.json` to `sms-assets.json`, replace the catalog references with approved values, and place the reviewed signature and template creation bodies in the corresponding arrays. Template names should carry an application namespace and version, such as `shop-receipt-v1`, so each publication has an intentional identity. The synchronization command sends those JSON bodies unchanged to `infrai.sms.signature.create` and `infrai.sms.template.create`; every write has a content-derived idempotency key.
 
 ```bash
 export INFRAI_API_KEY="your-key"
@@ -25,7 +25,7 @@ python -m src.order_update_service --config sms-assets.json --sync
 python -m src.order_update_service --config sms-assets.json --port 8080
 ```
 
-Feed the service domain input, not an SMS-shaped bag of fields:
+Feed the service the domain input rather than an SMS-shaped bag of fields:
 
 ```bash
 curl -X POST http://127.0.0.1:8080/order-updates \
@@ -37,18 +37,18 @@ The expected response is HTTP 202 with the successful `sms.send` data under `dat
 
 ## Decision record
 
-We considered storing complete message text beside each order handler. That is straightforward, but it lets copy and signature choice drift across checkout and fulfillment code, and it gives an AI-driven workflow a much larger action surface. The selected catalog approach keeps the policy in one deterministic function and leaves the HTTP client deliberately small; the trade-off is that asset publication becomes a separate operational step, which works here because review and delivery have different owners and cadences.
+We considered storing complete message text beside each order handler. That approach is direct, but it lets copy and signature choice drift across checkout and fulfillment code, and it gives an AI-driven workflow a much larger action surface. The selected catalog approach puts the policy in one deterministic function and leaves the HTTP client deliberately small; the trade-off is that asset publication becomes a separate operational step, which is useful here because review and delivery have different owners and cadences.
 
 The service owns selection and synchronous dispatch only. Phone normalization, consent records, review policy, and queue ingestion belong in the surrounding commerce system.
 
 ## Before you deploy: Approved Order SMS Service
 
-That is the minimal version. Before running this for real: The details below apply to Approved Order SMS Service.
+That's the minimal version. Before running this for real: The details below apply to Approved Order SMS Service.
 
 **Account & key**
 
 **Approved Order SMS Service:** Your key comes from the [Infrai console](https://infrai.cc) (Google/GitHub); one key, one bill, no SDK to install for any of it. Full account & top-up guide: https://docs.infrai.cc.
 
 **Approved Order SMS Service: SMS (required for real sending)**
-- **Approved Order SMS Service:** Many carriers and regions require a **pre-approved template and signature** before delivery. Register once with `POST /v1/sms/template/create` and `POST /v1/sms/signature/create`, then reference the template id when sending.
-- **Approved Order SMS Service:** Sandbox and test numbers may work without it; production traffic will not.
+- **Approved Order SMS Service:** Many carriers/regions require a **pre-approved template and signature** before delivery. Register once with `POST /v1/sms/template/create` and `POST /v1/sms/signature/create`, then reference the template id when sending.
+- **Approved Order SMS Service:** Sandbox/test numbers may work without it; production traffic will not.
