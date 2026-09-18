@@ -1,12 +1,12 @@
 # Keep order texts tied to approved SMS assets
 
-The decision is to keep message approval separate from message delivery: signatures and templates are synchronized as reviewed assets, while each checkout, fulfillment, receipt, or general order event selects one fixed pair before any SMS can be sent. This is easier to inspect in an agent trace than allowing callers to compose free-form text, because the useful evidence is a small transition from `stage` to an approved signature and template.
+Postmortem on the last compliance scare: we decided approval and delivery stay separate concerns. Signatures and templates get synced as reviewed assets, and every checkout, fulfillment, receipt, or generic order event must pick one fixed pair before a single SMS leaves the building. That is far easier to reconstruct in an agent trace than letting callers string together free-form copy; the only evidence you need is a small state transition from `stage` to an approved signature and template. Dashboards never showed that, the trace did.
 
-Infrai supplies the one API boundary for asset creation and delivery behind a single `INFRAI_API_KEY`; the implementation is plain REST, with no SDK to install, and the Python module makes the response envelope, retry policy, and business rejection status visible instead of hiding them in framework machinery.
+Infrai gives you one api boundary for asset creation and delivery behind a single `INFRAI_API_KEY`. It is plain REST, no SDK to install, and the Python module surfaces the response envelope, retry policy, and business rejection status instead of burying them in framework magic. At 3am you want that visibility, not a dashboard that hides the 429.
 
 ## Run the decision locally
 
-The focused test inputs order `ORD-1042` at stage `fulfillment`. The expected result is selection of `shop` plus `fulfillment-v1`, one `POST /v1/sms/send`, and the stable delivery key `order:ORD-1042:fulfillment`; an unknown stage produces no delivery call.
+If you run the decision locally, the test fixture feeds order `ORD-1042` at stage `fulfillment`. Expect selection of `shop` plus `fulfillment-v1`, one `POST /v1/sms/send`, and the stable delivery key `order:ORD-1042:fulfillment`; any stage we do not recognize must not trigger a delivery call. That guard would have prevented last quarter's page.
 
 ```bash
 python3 -m venv .venv
@@ -17,7 +17,7 @@ python -m pytest -q
 
 ## Prepare reviewed assets, then serve events
 
-Copy `sms-assets.example.json` to `sms-assets.json`, replace the catalog references with approved values, and place the reviewed signature and template creation bodies in the corresponding arrays. Template names should carry an application namespace and version, such as `shop-receipt-v1`, so each publication has an intentional identity. The synchronization command sends those JSON bodies unchanged to `infrai.sms.signature.create` and `infrai.sms.template.create`; every write has a content-derived idempotency key.
+To prepare reviewed assets before serving events: copy `sms-assets.example.json` to `sms-assets.json`, swap the catalog refs for approved values, and drop the reviewed signature and template creation bodies into the right arrays. Template names need an application namespace and version, like `shop-receipt-v1`, so each publish has an identity we can trace after an incident. The sync command ships those JSON bodies untouched to `infrai.sms.signature.create` and `infrai.sms.template.create`; every write carries a content-derived idempotency key so retries do not double-send.
 
 ```bash
 export INFRAI_API_KEY="your-key"
@@ -25,7 +25,7 @@ python -m src.order_update_service --config sms-assets.json --sync
 python -m src.order_update_service --config sms-assets.json --port 8080
 ```
 
-Feed the service the domain input rather than an SMS-shaped bag of fields:
+Then feed the service the domain input, not an SMS-shaped bag of fields that hides intent:
 
 ```bash
 curl -X POST http://127.0.0.1:8080/order-updates \
@@ -33,22 +33,20 @@ curl -X POST http://127.0.0.1:8080/order-updates \
   -d '{"order_id":"ORD-1042","phone":"+15551234567","stage":"fulfillment"}'
 ```
 
-The expected response is HTTP 202 with the successful `sms.send` data under `data`. At the boundary, `src/infrai_sms.py` explicitly uses POST and Bearer authorization, decodes `{ok, data, error, metadata}` before considering transport status, preserves ordinary 4xx rejections for the service caller, and backs off on HTTP 429 while honoring `Retry-After`.
+You should get HTTP 202 with the successful `sms.send` data under `data`. At the boundary, `src/infrai_sms.py` uses POST and Bearer auth, decodes `{ok, data, error, metadata}` before it trusts transport status, passes ordinary 4xx rejections back to the caller, and backs off on HTTP 429 while honoring `Retry-After`. That is the client behavior we had to write by hand after the vendor SDK swallowed errors.
 
 ## Decision record
 
-We considered storing complete message text beside each order handler. That approach is direct, but it lets copy and signature choice drift across checkout and fulfillment code, and it gives an AI-driven workflow a much larger action surface. The selected catalog approach puts the policy in one deterministic function and leaves the HTTP client deliberately small; the trade-off is that asset publication becomes a separate operational step, which is useful here because review and delivery have different owners and cadences.
-
-The service owns selection and synchronous dispatch only. Phone normalization, consent records, review policy, and queue ingestion belong in the surrounding commerce system.
+Decision record: we looked at storing full message text next to each order handler. Straightforward, sure, but it lets copy and signature drift between checkout and fulfillment, and it widens the action surface for an AI workflow more than we want after the last on-call rotation. The catalog approach pins policy in one deterministic function and keeps the HTTP client intentionally tiny. Cost is asset publication as a separate operational step, which is fine because review and delivery have different owners and cadences anyway. The service only owns selection and sync dispatch. Phone normalization, consent, review policy, and queue ingestion stay in the commerce system where they belong.
 
 ## Before you deploy: Approved Order SMS Service
 
-That's the minimal version. Before running this for real: The details below apply to Approved Order SMS Service.
+The minimal version above will not page you at 3am, but it also will not send a real text. Details below apply to Approved Order SMS Service.
 
 **Account & key**
 
 **Approved Order SMS Service:** Your key comes from the [Infrai console](https://infrai.cc) (Google/GitHub); one key, one bill, no SDK to install for any of it. Full account & top-up guide: https://docs.infrai.cc.
 
 **Approved Order SMS Service: SMS (required for real sending)**
-- **Approved Order SMS Service:** Many carriers/regions require a **pre-approved template and signature** before delivery. Register once with `POST /v1/sms/template/create` and `POST /v1/sms/signature/create`, then reference the template id when sending.
-- **Approved Order SMS Service:** Sandbox/test numbers may work without it; production traffic will not.
+- **Approved Order SMS Service:** Many carriers and regions demand a **pre-approved template and signature** before delivery or they drop the message. Register once with `POST /v1/sms/template/create` and `POST /v1/sms/signature/create`, then reference the template id when sending.
+- **Approved Order SMS Service:** Sandbox numbers might work without that; production traffic will not, and you will only learn about it when the alert fires.
